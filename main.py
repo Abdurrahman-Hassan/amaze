@@ -145,11 +145,11 @@ async def generate_qr(
                     durations = []
                     
                     # Optimal size for GIF QR codes
-                    max_gif_size = 600
+                    max_gif_size = 400
                     
                     # Extract and optimize frames
                     frame_count = 0
-                    max_frames = 50  # Limit frames for performance
+                    max_frames = 30  # Limit frames for performance
                     
                     for i, frame in enumerate(ImageSequence.Iterator(gif)):
                         if i >= max_frames:
