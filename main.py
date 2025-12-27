@@ -308,20 +308,53 @@ def main(context):
         
         # Get body - prioritize binary for file uploads
         body = b""
-        if hasattr(context.req, 'bodyBinary') and context.req.bodyBinary:
+        
+        # Try body_binary first (raw bytes - best for multipart/form-data)
+        if hasattr(context.req, 'body_binary'):
+            body = context.req.body_binary
+            context.log("Using body_binary")
+        # Try bodyBinary (camelCase variant)
+        elif hasattr(context.req, 'bodyBinary'):
             body = context.req.bodyBinary
+            context.log("Using bodyBinary")
+        # Try body_raw (raw bytes - deprecated but might exist)
+        elif hasattr(context.req, 'body_raw'):
+            body = context.req.body_raw
+            context.log("Using body_raw")
+        elif hasattr(context.req, 'bodyRaw'):
+            body = context.req.bodyRaw
+            context.log("Using bodyRaw")
+        # Only use text/json variants if binary not available
+        elif hasattr(context.req, 'body_text') and context.req.body_text:
+            body = context.req.body_text.encode('utf-8')
+            context.log("Using body_text")
         elif hasattr(context.req, 'bodyText') and context.req.bodyText:
             body = context.req.bodyText.encode('utf-8')
+            context.log("Using bodyText")
+        elif hasattr(context.req, 'body_json') and context.req.body_json:
+            body = json.dumps(context.req.body_json).encode('utf-8')
+            context.log("Using body_json")
         elif hasattr(context.req, 'bodyJson') and context.req.bodyJson:
             body = json.dumps(context.req.bodyJson).encode('utf-8')
-        elif hasattr(context.req, 'bodyRaw') and context.req.bodyRaw:
-            # Deprecated but might exist
-            body = context.req.bodyRaw
+            context.log("Using bodyJson")
+        # Avoid using 'body' directly as it might try to decode binary as UTF-8
+        # Only use as last resort
         elif hasattr(context.req, 'body'):
-            # Fallback
-            body = context.req.body
-            if isinstance(body, str):
-                body = body.encode('utf-8')
+            try:
+                # Try to use it as-is if it's already bytes
+                if isinstance(context.req.body, bytes):
+                    body = context.req.body
+                    context.log("Using body (bytes)")
+                elif isinstance(context.req.body, str):
+                    body = context.req.body.encode('utf-8')
+                    context.log("Using body (string)")
+                else:
+                    # Unknown type, try to convert
+                    body = str(context.req.body).encode('utf-8')
+                    context.log("Using body (converted)")
+            except Exception as body_err:
+                context.error(f"Error accessing body: {body_err}")
+                body = b""
         
         
         context.log(f"Appwrite request: {method} {path}")
