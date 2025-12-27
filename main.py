@@ -291,11 +291,13 @@ async def generate_qr(
 
 
 # Appwrite Function entry point
-async def main(context):
+# Appwrite Function entry point
+def main(context):
     """
     Appwrite Function entry point
     Routes requests to the FastAPI app
     """
+    import json
     try:
         from fastapi.testclient import TestClient
         
@@ -303,73 +305,78 @@ async def main(context):
         method = context.req.method
         path = context.req.path or "/"
         headers = dict(context.req.headers) if hasattr(context.req, 'headers') else {}
-        # Try to get raw body first (for binary/multipart support)
-        if hasattr(context.req, 'bodyRaw'):
-            body = context.req.bodyRaw
-        else:
-            body = context.req.body if hasattr(context.req, 'body') else {}
         
-        logger.info(f"Appwrite request: {method} {path}")
+        # Get body - prioritize binary for file uploads
+        body = b""
+        if hasattr(context.req, 'bodyBinary') and context.req.bodyBinary:
+            body = context.req.bodyBinary
+        elif hasattr(context.req, 'bodyText') and context.req.bodyText:
+            body = context.req.bodyText.encode('utf-8')
+        elif hasattr(context.req, 'bodyJson') and context.req.bodyJson:
+            body = json.dumps(context.req.bodyJson).encode('utf-8')
+        elif hasattr(context.req, 'bodyRaw') and context.req.bodyRaw:
+            # Deprecated but might exist
+            body = context.req.bodyRaw
+        elif hasattr(context.req, 'body'):
+            # Fallback
+            body = context.req.body
+            if isinstance(body, str):
+                body = body.encode('utf-8')
+        
+        
+        context.log(f"Appwrite request: {method} {path}")
         
         # Create test client to call FastAPI app
         client = TestClient(app)
         
-        # Route to appropriate endpoint
-        if path == "/" or path == "/health" or not path:
-            # Health check
-            response = client.get("/health")
-        elif path == "/qr" and method == "POST":
-            # QR generation - need to handle form data
-            # Call the FastAPI endpoint
-            kwargs = {}
-            
-            # Forward headers to preserve Content-Type
-            # Filter out headers that might cause issues
-            blocked_headers = {'host', 'content-length'}
-            req_headers = {k: v for k, v in headers.items() if k.lower() not in blocked_headers}
-            kwargs['headers'] = req_headers
-
-            # Handle body
-            if isinstance(body, dict):
-                # If Appwrite parsed it as JSON, pass as data (will match Form fields if simple)
-                kwargs['data'] = body
-            else:
-                # Raw body (string or bytes)
-                if isinstance(body, str):
-                    kwargs['content'] = body.encode('utf-8')
-                else:
-                    kwargs['content'] = body
-            
-            response = client.post("/qr", **kwargs)
-        else:
-            # Unknown endpoint
-            return context.res.json({
-                "error": "Not Found",
-                "message": f"Endpoint {path} not found",
-                "available_endpoints": {
-                    "health": "GET /health",
-                    "generate_qr": "POST /qr"
-                }
-            }, 404)
+        # Prepare kwargs for the request
+        kwargs = {}
         
-        # Return the response
-        if response.status_code == 200:
-            # Check if it's JSON or binary
-            content_type = response.headers.get('content-type', '')
-            if 'application/json' in content_type:
-                return context.res.json(response.json(), response.status_code)
-            else:
-                # Binary response (image)
-                return context.res.send(
-                    response.content,
-                    response.status_code,
-                    {'Content-Type': content_type}
-                )
+        # Forward headers 
+        # Filter out headers that might cause issues with internal routing
+        blocked_headers = {'host', 'content-length', 'connection'} 
+        req_headers = {k: v for k, v in headers.items() if k.lower() not in blocked_headers}
+        kwargs['headers'] = req_headers
+        kwargs['content'] = body
+        
+        # Call the FastAPI endpoint
+        try:
+            response = client.request(method, path, **kwargs)
+        except Exception as route_err:
+            # If explicit routing failed, try to handle simple cases manually or return error
+            context.error(f"Routing error: {route_err}")
+            raise
+            
+        # Handle the response
+        content_type = response.headers.get('content-type', '')
+        
+        # Binary response (Images)
+        if response.status_code == 200 and ('image/' in content_type or 'application/octet-stream' in content_type):
+            return context.res.binary(
+                response.content,
+                response.status_code,
+                {'Content-Type': content_type}
+            )
+            
+        # JSON response
+        elif 'application/json' in content_type:
+            try:
+                json_data = response.json()
+                return context.res.json(json_data, response.status_code, dict(response.headers))
+            except:
+                # Fallback if json parse fails
+                return context.res.text(response.text, response.status_code, dict(response.headers))
+                
+        # Text/HTML/Other response
         else:
-            return context.res.json(response.json(), response.status_code)
+            return context.res.text(
+                response.text, 
+                response.status_code, 
+                dict(response.headers)
+            )
         
     except Exception as e:
-        logger.error(f"Error in Appwrite function: {e}", exc_info=True)
+        context.error(f"Error in Appwrite function: {e}")
         return context.res.json({
             "error": str(e),
             "message": "Error in QR microservice",
