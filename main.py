@@ -291,37 +291,74 @@ async def generate_qr(
 
 
 # Appwrite Function entry point
-def main(context):
+async def main(context):
     """
     Appwrite Function entry point
-    This function is called by Appwrite when the function is executed
+    Routes requests to the FastAPI app
     """
     try:
-        # Simple health check response for now
-        # Full FastAPI integration requires more complex setup
-        return context.res.json({
-            "status": "healthy",
-            "service": "qr-microservice",
-            "version": "1.0.0",
-            "message": "QR Generator is running!",
-            "note": "Use the direct URL endpoints: /health and /qr",
-            "endpoints": {
-                "health": "GET /health",
-                "generate_qr": "POST /qr"
-            },
-            "features": [
-                "Static QR codes",
-                "Artistic QR codes with images",
-                "Animated GIF QR codes",
-                "WebP auto-conversion",
-                "Image optimization"
-            ]
-        })
+        from fastapi.testclient import TestClient
+        
+        # Get request details
+        method = context.req.method
+        path = context.req.path or "/"
+        headers = dict(context.req.headers) if hasattr(context.req, 'headers') else {}
+        body = context.req.body if hasattr(context.req, 'body') else {}
+        
+        logger.info(f"Appwrite request: {method} {path}")
+        
+        # Create test client to call FastAPI app
+        client = TestClient(app)
+        
+        # Route to appropriate endpoint
+        if path == "/" or path == "/health" or not path:
+            # Health check
+            response = client.get("/health")
+        elif path == "/qr" and method == "POST":
+            # QR generation - need to handle form data
+            # Parse form data from body
+            files = {}
+            data = {}
+            
+            # If body is a dict, use it directly
+            if isinstance(body, dict):
+                data = body
+            
+            # Call the FastAPI endpoint
+            response = client.post("/qr", data=data, files=files)
+        else:
+            # Unknown endpoint
+            return context.res.json({
+                "error": "Not Found",
+                "message": f"Endpoint {path} not found",
+                "available_endpoints": {
+                    "health": "GET /health",
+                    "generate_qr": "POST /qr"
+                }
+            }, 404)
+        
+        # Return the response
+        if response.status_code == 200:
+            # Check if it's JSON or binary
+            content_type = response.headers.get('content-type', '')
+            if 'application/json' in content_type:
+                return context.res.json(response.json(), response.status_code)
+            else:
+                # Binary response (image)
+                return context.res.send(
+                    response.content,
+                    response.status_code,
+                    {'Content-Type': content_type}
+                )
+        else:
+            return context.res.json(response.json(), response.status_code)
         
     except Exception as e:
         logger.error(f"Error in Appwrite function: {e}", exc_info=True)
         return context.res.json({
             "error": str(e),
-            "message": "Error in QR microservice"
+            "message": "Error in QR microservice",
+            "type": type(e).__name__
         }, 500)
+
 
