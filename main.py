@@ -382,9 +382,29 @@ def main(context):
             
         # Handle the response
         content_type = response.headers.get('content-type', '')
+        context.log(f"Response content-type: {content_type}, status: {response.status_code}")
         
-        # Binary response (Images)
-        if response.status_code == 200 and ('image/' in content_type or 'application/octet-stream' in content_type):
+        # Binary response (Images) - check both header and content
+        # FastAPI StreamingResponse should have image/* content-type
+        is_image = 'image/' in content_type or 'application/octet-stream' in content_type
+        
+        # Also check if content looks like an image (PNG/GIF/JPEG magic bytes)
+        if not is_image and len(response.content) > 4:
+            # Check for image magic bytes
+            magic = response.content[:4]
+            if magic[:3] == b'\x89PNG' or magic[:3] == b'GIF' or magic[:2] == b'\xff\xd8':
+                is_image = True
+                # Fix content-type if it's wrong
+                if 'image/' not in content_type:
+                    if magic[:3] == b'\x89PNG':
+                        content_type = 'image/png'
+                    elif magic[:3] == b'GIF':
+                        content_type = 'image/gif'
+                    elif magic[:2] == b'\xff\xd8':
+                        content_type = 'image/jpeg'
+                    context.log(f"Detected image by magic bytes, corrected content-type to: {content_type}")
+        
+        if is_image:
             return context.res.binary(
                 response.content,
                 response.status_code,
