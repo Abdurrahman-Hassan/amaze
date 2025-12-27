@@ -316,16 +316,27 @@ async def main(context):
             response = client.get("/health")
         elif path == "/qr" and method == "POST":
             # QR generation - need to handle form data
-            # Parse form data from body
-            files = {}
-            data = {}
-            
-            # If body is a dict, use it directly
-            if isinstance(body, dict):
-                data = body
-            
             # Call the FastAPI endpoint
-            response = client.post("/qr", data=data, files=files)
+            kwargs = {}
+            
+            # Forward headers to preserve Content-Type
+            # Filter out headers that might cause issues
+            blocked_headers = {'host', 'content-length'}
+            req_headers = {k: v for k, v in headers.items() if k.lower() not in blocked_headers}
+            kwargs['headers'] = req_headers
+
+            # Handle body
+            if isinstance(body, dict):
+                # If Appwrite parsed it as JSON, pass as data (will match Form fields if simple)
+                kwargs['data'] = body
+            else:
+                # Raw body (string or bytes)
+                if isinstance(body, str):
+                    kwargs['content'] = body.encode('utf-8')
+                else:
+                    kwargs['content'] = body
+            
+            response = client.post("/qr", **kwargs)
         else:
             # Unknown endpoint
             return context.res.json({
