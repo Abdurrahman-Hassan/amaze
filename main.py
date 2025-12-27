@@ -303,7 +303,11 @@ async def main(context):
         method = context.req.method
         path = context.req.path or "/"
         headers = dict(context.req.headers) if hasattr(context.req, 'headers') else {}
-        body = context.req.body if hasattr(context.req, 'body') else {}
+        # Try to get raw body first (for binary/multipart support)
+        if hasattr(context.req, 'bodyRaw'):
+            body = context.req.bodyRaw
+        else:
+            body = context.req.body if hasattr(context.req, 'body') else {}
         
         logger.info(f"Appwrite request: {method} {path}")
         
@@ -369,7 +373,8 @@ async def main(context):
         return context.res.json({
             "error": str(e),
             "message": "Error in QR microservice",
-            "type": type(e).__name__
+            "type": type(e).__name__,
+            "req_keys": dir(context.req) if hasattr(context, 'req') else []
         }, 500)
 
 
