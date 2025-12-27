@@ -1,0 +1,38 @@
+# Exclude Python cache and virtual environment
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Exclude test files
+test_*.py
+benchmark.py
+*_test.py
+
+# Exclude generated QR codes
+*.png
+*.gif
+!test_background.png
+
+# Exclude temp files
+temp/
+*.tmp
+
+# Exclude IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Exclude OS files
+.DS_Store
+Thumbs.db
+
+# Exclude documentation (optional)
+*.md
+!README.md
+!APPWRITE.md
