@@ -1,3 +1,8 @@
+"""
+QR Code Microservice for Appwrite Functions
+Generates static, artistic, and animated GIF QR codes
+"""
+
 import os
 import logging
 from fastapi import FastAPI, Form, File, UploadFile, HTTPException
@@ -282,3 +287,52 @@ async def generate_qr(
                 logger.info(f"Cleaned up temp directory: {temp_dir}")
         except Exception as e:
             logger.error(f"Error cleaning up temp files: {e}")
+
+
+# Appwrite Function entry point
+def main(context):
+    """
+    Appwrite Function entry point
+    This function is called by Appwrite when the function is executed
+    """
+    try:
+        from mangum import Mangum
+        
+        # Create Mangum handler to wrap FastAPI for serverless
+        handler = Mangum(app, lifespan="off")
+        
+        # Convert Appwrite context to ASGI event
+        event = {
+            "httpMethod": context.req.method,
+            "path": context.req.path,
+            "headers": dict(context.req.headers),
+            "body": context.req.body,
+            "isBase64Encoded": False,
+        }
+        
+        # Call the handler
+        response = handler(event, {})
+        
+        # Return response
+        return context.res.send(
+            response.get("body", ""),
+            response.get("statusCode", 200),
+            response.get("headers", {})
+        )
+        
+    except ImportError:
+        # Mangum not available, return simple response
+        logger.warning("Mangum not installed, returning basic response")
+        return context.res.json({
+            "message": "QR Generator is running!",
+            "note": "Install 'mangum' for full FastAPI support",
+            "endpoints": {
+                "health": "/health",
+                "generate": "/qr"
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in Appwrite function: {e}", exc_info=True)
+        return context.res.json({
+            "error": str(e)
+        }, 500)
