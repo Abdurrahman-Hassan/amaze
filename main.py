@@ -149,10 +149,14 @@ async def generate_qr(
                     
                     # Extract and optimize frames
                     frame_count = 0
-                    max_frames = 30  # Limit frames for performance
+                    max_frames = 40  # Limit frames for performance
                     
                     for i, frame in enumerate(ImageSequence.Iterator(gif)):
-                        if i >= max_frames:
+                        # Skip every other frame for faster processing
+                        if i % 2 != 0:
+                            continue
+                        
+                        if frame_count >= max_frames:
                             logger.info(f"Limited GIF to {max_frames} frames for performance")
                             break
                         
@@ -165,12 +169,12 @@ async def generate_qr(
                         
                         frames.append(frame_rgb)
                         
-                        # Get frame duration
+                        # Get frame duration and double it (since we're skipping frames)
                         try:
                             duration = frame.info.get('duration', 100)
                         except:
                             duration = 100
-                        durations.append(duration)
+                        durations.append(duration * 2)  # Double duration to maintain animation speed
                         
                         frame_count += 1
                     
