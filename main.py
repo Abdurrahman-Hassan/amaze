@@ -289,6 +289,7 @@ async def generate_qr(
             logger.error(f"Error cleaning up temp files: {e}")
 
 
+
 # Appwrite Function entry point
 def main(context):
     """
@@ -296,43 +297,31 @@ def main(context):
     This function is called by Appwrite when the function is executed
     """
     try:
-        from mangum import Mangum
-        
-        # Create Mangum handler to wrap FastAPI for serverless
-        handler = Mangum(app, lifespan="off")
-        
-        # Convert Appwrite context to ASGI event
-        event = {
-            "httpMethod": context.req.method,
-            "path": context.req.path,
-            "headers": dict(context.req.headers),
-            "body": context.req.body,
-            "isBase64Encoded": False,
-        }
-        
-        # Call the handler
-        response = handler(event, {})
-        
-        # Return response
-        return context.res.send(
-            response.get("body", ""),
-            response.get("statusCode", 200),
-            response.get("headers", {})
-        )
-        
-    except ImportError:
-        # Mangum not available, return simple response
-        logger.warning("Mangum not installed, returning basic response")
+        # Simple health check response for now
+        # Full FastAPI integration requires more complex setup
         return context.res.json({
+            "status": "healthy",
+            "service": "qr-microservice",
+            "version": "1.0.0",
             "message": "QR Generator is running!",
-            "note": "Install 'mangum' for full FastAPI support",
+            "note": "Use the direct URL endpoints: /health and /qr",
             "endpoints": {
-                "health": "/health",
-                "generate": "/qr"
-            }
+                "health": "GET /health",
+                "generate_qr": "POST /qr"
+            },
+            "features": [
+                "Static QR codes",
+                "Artistic QR codes with images",
+                "Animated GIF QR codes",
+                "WebP auto-conversion",
+                "Image optimization"
+            ]
         })
+        
     except Exception as e:
         logger.error(f"Error in Appwrite function: {e}", exc_info=True)
         return context.res.json({
-            "error": str(e)
+            "error": str(e),
+            "message": "Error in QR microservice"
         }, 500)
+
