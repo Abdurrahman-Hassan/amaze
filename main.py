@@ -405,7 +405,8 @@ def main(context):
                     context.log(f"Detected image by magic bytes, corrected content-type to: {content_type}")
         
         if is_image:
-            return context.res.binary(
+            # Use send() instead of binary() to properly set headers
+            return context.res.send(
                 response.content,
                 response.status_code,
                 {'Content-Type': content_type}
