@@ -357,7 +357,20 @@ def main(context):
                 body = b""
         
         
+        
         context.log(f"Appwrite request: {method} {path}")
+        
+        # Handle CORS preflight OPTIONS requests
+        if method == 'OPTIONS':
+            return context.res.empty(
+                200,
+                {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                    'Access-Control-Max-Age': '86400'
+                }
+            )
         
         # Create test client to call FastAPI app
         client = TestClient(app)
@@ -384,6 +397,14 @@ def main(context):
         content_type = response.headers.get('content-type', '')
         context.log(f"Response content-type: {content_type}, status: {response.status_code}")
         
+        # CORS headers - allow all origins for public API
+        cors_headers = {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+            'Access-Control-Max-Age': '86400'
+        }
+        
         # Binary response (Images) - check both header and content
         # FastAPI StreamingResponse should have image/* content-type
         is_image = 'image/' in content_type or 'application/octet-stream' in content_type
@@ -406,27 +427,31 @@ def main(context):
         
         if is_image:
             # Use send() instead of binary() to properly set headers
+            headers = {**cors_headers, 'Content-Type': content_type}
             return context.res.send(
                 response.content,
                 response.status_code,
-                {'Content-Type': content_type}
+                headers
             )
             
         # JSON response
         elif 'application/json' in content_type:
             try:
                 json_data = response.json()
-                return context.res.json(json_data, response.status_code, dict(response.headers))
+                headers = {**cors_headers, **dict(response.headers)}
+                return context.res.json(json_data, response.status_code, headers)
             except:
                 # Fallback if json parse fails
-                return context.res.text(response.text, response.status_code, dict(response.headers))
+                headers = {**cors_headers, **dict(response.headers)}
+                return context.res.text(response.text, response.status_code, headers)
                 
         # Text/HTML/Other response
         else:
+            headers = {**cors_headers, **dict(response.headers)}
             return context.res.text(
                 response.text, 
                 response.status_code, 
-                dict(response.headers)
+                headers
             )
         
     except Exception as e:
