@@ -1,0 +1,385 @@
+{
+  "info": {
+    "name": "QR Code Microservice Tests",
+    "description": "Test collection for QR Code Microservice on Appwrite",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "YOUR_APPWRITE_FUNCTION_URL",
+      "type": "string"
+    },
+    {
+      "key": "api_key",
+      "value": "YOUR_API_KEY_HERE",
+      "type": "string",
+      "description": "API key from Appwrite environment variables"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{base_url}}/health",
+          "host": ["{{base_url}}"],
+          "path": ["health"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Simple Text QR Code",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "https://qrcartoon.com",
+              "type": "text"
+            },
+            {
+              "key": "version",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "H",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "QR Code with Custom Settings",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "Hello from QR Cartoon! Visit us at https://qrcartoon.com for amazing QR codes",
+              "type": "text"
+            },
+            {
+              "key": "version",
+              "value": "5",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "M",
+              "type": "text"
+            },
+            {
+              "key": "contrast",
+              "value": "1.2",
+              "type": "text"
+            },
+            {
+              "key": "brightness",
+              "value": "1.1",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "QR Code with Background Image",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "https://qrcartoon.com",
+              "type": "text"
+            },
+            {
+              "key": "version",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "H",
+              "type": "text"
+            },
+            {
+              "key": "colorized",
+              "value": "true",
+              "type": "text"
+            },
+            {
+              "key": "picture",
+              "type": "file",
+              "src": "path/to/your/image.png"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Animated GIF QR Code",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "https://qrcartoon.com/animated",
+              "type": "text"
+            },
+            {
+              "key": "version",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "H",
+              "type": "text"
+            },
+            {
+              "key": "colorized",
+              "value": "true",
+              "type": "text"
+            },
+            {
+              "key": "picture",
+              "type": "file",
+              "src": "path/to/your/animation.gif"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Test CORS - Wrong Origin (Should Fail)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://evil-site.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "https://qrcartoon.com",
+              "type": "text"
+            },
+            {
+              "key": "version",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "H",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Test Empty Text (Should Fail)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "",
+              "type": "text"
+            },
+            {
+              "key": "version",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "H",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Test Text Too Long (Should Fail)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "A".repeat(1001),
+              "type": "text",
+              "description": "1001 characters - exceeds limit"
+            },
+            {
+              "key": "version",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "H",
+              "type": "text"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Test Invalid Error Level (Should Fail)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Origin",
+            "value": "https://qrcartoon.com",
+            "type": "text"
+          }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "words",
+              "value": "https://qrcartoon.com",
+              "type": "text"
+            },
+            {
+              "key": "version",
+              "value": "1",
+              "type": "text"
+            },
+            {
+              "key": "level",
+              "value": "X",
+              "type": "text",
+              "description": "Invalid level - should be L, M, Q, or H"
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{base_url}}/qr",
+          "host": ["{{base_url}}"],
+          "path": ["qr"]
+        }
+      },
+      "response": []
+    }
+  ]
+}

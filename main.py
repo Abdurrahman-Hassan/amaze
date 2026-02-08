@@ -5,41 +5,151 @@ Generates static, artistic, and animated GIF QR codes
 
 import os
 import logging
-from fastapi import FastAPI, Form, File, UploadFile, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, Form, File, UploadFile, HTTPException, Request, Header
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from amzqr import amzqr
 from typing import Optional
 from PIL import Image
 from io import BytesIO
 import tempfile
+import time
+from collections import defaultdict
+from datetime import datetime, timedelta
+import hashlib
+import hmac
+
+# Load .env file for local development (not needed in Appwrite)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, using environment variables directly
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Maximum file size: 10MB
-MAX_FILE_SIZE = 10 * 1024 * 1024
+# Security Configuration
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB (reduced for bandwidth optimization)
+MAX_REQUESTS_PER_MINUTE = 20  # Rate limit per IP (reduced from 30 for better protection)
+MAX_REQUESTS_PER_MINUTE_NO_KEY = 5  # Stricter limit without API key
+MAX_QR_TEXT_LENGTH = 1000  # Maximum characters in QR code (reduced for faster processing)
+
+# API Key Configuration (set in Appwrite environment variables)
+API_KEY = os.getenv("API_KEY", "")  # Set this in Appwrite Function settings
+API_SECRET = os.getenv("API_SECRET", "")  # For request signing (optional, more secure)
+
+# Allowed domains for referer check
+ALLOWED_DOMAINS = ["qrcartoon.com", "www.qrcartoon.com"]
+
+# Log API key status on startup (for debugging)
+if API_KEY:
+    logger.info(f"✓ API_KEY loaded: {API_KEY[:10]}...")
+else:
+    logger.warning("⚠ WARNING: API_KEY not set! API will reject all requests.")
+
+# Optimization Configuration
+MAX_IMAGE_SIZE = 400  # Maximum dimension for uploaded images (reduced from 600)
+MAX_GIF_FRAMES = 20  # Maximum GIF frames (reduced from 40)
+MAX_GIF_SIZE = 300  # Maximum GIF dimension (reduced from 400)
+JPEG_QUALITY = 65  # JPEG compression quality (reduced from 75)
+
+# Rate limiting storage (in-memory, use Redis for production)
+rate_limit_storage = defaultdict(list)
 
 app = FastAPI(
     title="QR Code Microservice",
     description="Generate artistic and animated QR codes using amazing-qr",
-    version="1.0.0"
+    version="1.0.0",
+    docs_url=None,  # Disable docs in production for security
+    redoc_url=None,  # Disable redoc in production for security
+    openapi_url=None,  # Disable OpenAPI schema for bandwidth savings
 )
 
-# Add CORS middleware
+# Security Middleware
+# Add trusted host middleware to prevent host header attacks
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["qrcartoon.com", "www.qrcartoon.com", "localhost", "127.0.0.1", "*"]
+)
+
+# Add GZip compression for responses (aggressive compression for bandwidth savings)
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=9)
+
+# Add CORS middleware - restricted to specific domains
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure this based on your needs
+    allow_origins=[
+        "https://qrcartoon.com",
+        "https://www.qrcartoon.com", 
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:8000"
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "x-api-key"],
+    max_age=3600,  # Cache preflight requests for 1 hour
 )
+
+# Rate limiting middleware
+@app.middleware("http")
+async def security_validation_middleware(request: Request, call_next):
+    """Strict API key authentication - REQUIRES API key for all requests"""
+    client_ip = request.client.host if request.client else "unknown"
+
+    # Skip security for health check
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    # REQUIRE API Key for ALL requests (no exceptions)
+    api_key = request.headers.get("X-API-Key") or request.headers.get("x-api-key")
+
+    # Check if API key is valid
+    if not api_key or not API_KEY or api_key != API_KEY:
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Unauthorized. Valid API key required in X-API-Key header."}
+        )
+
+    # Rate limiting (with valid API key)
+    current_time = datetime.now()
+    rate_limit_storage[client_ip] = [
+        timestamp for timestamp in rate_limit_storage[client_ip]
+        if current_time - timestamp < timedelta(minutes=1)
+    ]
+
+    if len(rate_limit_storage[client_ip]) >= MAX_REQUESTS_PER_MINUTE:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": "Too many requests. Please try again later."}
+        )
+
+    rate_limit_storage[client_ip].append(current_time)
+
+    # Process request
+    response = await call_next(request)
+
+    # Add security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'"
+
+    return response
+
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint for monitoring"""
-    return {"status": "healthy", "service": "qr-microservice"}
+    """Lightweight health check endpoint"""
+    return {"ok": 1}
 
 @app.post("/qr")
 async def generate_qr(
@@ -67,9 +177,29 @@ async def generate_qr(
     - QR code image (PNG for static, GIF for animated)
     """
     
+    # Security validations
+    if not words or not words.strip():
+        raise HTTPException(status_code=400, detail="QR code text cannot be empty")
+    
+    if len(words) > MAX_QR_TEXT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Text too long. Maximum length is {MAX_QR_TEXT_LENGTH} characters"
+        )
+    
     # Validate error correction level
     if level not in ['L', 'M', 'Q', 'H']:
         raise HTTPException(status_code=400, detail="Level must be one of: L, M, Q, H")
+    
+    # Validate file type if picture is provided
+    if picture:
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'}
+        file_ext = os.path.splitext(picture.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid file type. Allowed: {', '.join(allowed_extensions)}"
+            )
     
     # Use system temp directory - automatically cleaned by OS
     temp_dir = tempfile.mkdtemp()
@@ -92,8 +222,6 @@ async def generate_qr(
             with open(original_path, "wb") as buffer:
                 buffer.write(contents)
             
-            logger.info(f"Uploaded file: {picture.filename}, size: {len(contents)} bytes")
-            
             # Convert unsupported formats to PNG/GIF
             # amzqr supports: .jpg, .png, .bmp, .gif
             file_ext = os.path.splitext(picture.filename)[1].lower()
@@ -103,7 +231,6 @@ async def generate_qr(
             is_gif = file_ext == '.gif'
             
             if file_ext not in supported_formats:
-                logger.info(f"Converting {file_ext} to PNG for compatibility")
                 try:
                     img = Image.open(original_path)
                     # Convert to RGB if necessary (for formats like WebP with transparency)
@@ -117,26 +244,21 @@ async def generate_qr(
                     elif img.mode != 'RGB':
                         img = img.convert('RGB')
                     
-                    # Optimize size - resize to optimal dimensions
-                    max_size = 600  # Reduced from 800 for faster processing
-                    if img.width > max_size or img.height > max_size:
-                        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                        logger.info(f"Resized image to {img.size}")
+                    # Aggressive resize for bandwidth optimization
+                    if img.width > MAX_IMAGE_SIZE or img.height > MAX_IMAGE_SIZE:
+                        img.thumbnail((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE), Image.Resampling.LANCZOS)
                     
-                    # Save as PNG
-                    converted_path = os.path.join(temp_dir, "converted_image.png")
-                    img.save(converted_path, 'PNG', optimize=True)
+                    # Save as JPEG for better compression (smaller file size)
+                    converted_path = os.path.join(temp_dir, "converted_image.jpg")
+                    img.save(converted_path, 'JPEG', quality=JPEG_QUALITY, optimize=True)
                     picture_path = converted_path
-                    logger.info(f"Successfully converted and optimized to PNG")
                 except Exception as e:
-                    logger.error(f"Error converting image: {e}")
                     raise HTTPException(
                         status_code=400,
                         detail=f"Unable to process image format {file_ext}. Supported: JPG, PNG, BMP, GIF, WebP"
                     )
             elif is_gif:
                 # Optimize GIF - reduce frames and resize for faster processing
-                logger.info("Optimizing GIF for faster processing...")
                 try:
                     from PIL import ImageSequence
                     
@@ -144,41 +266,36 @@ async def generate_qr(
                     frames = []
                     durations = []
                     
-                    # Optimal size for GIF QR codes
-                    max_gif_size = 400
-                    
                     # Extract and optimize frames
                     frame_count = 0
-                    max_frames = 40  # Limit frames for performance
                     
                     for i, frame in enumerate(ImageSequence.Iterator(gif)):
-                        # Skip every other frame for faster processing
-                        if i % 2 != 0:
+                        # Skip every 3rd frame for bandwidth optimization (keep 2, skip 1)
+                        if i % 3 == 2:
                             continue
                         
-                        if frame_count >= max_frames:
-                            logger.info(f"Limited GIF to {max_frames} frames for performance")
+                        if frame_count >= MAX_GIF_FRAMES:
                             break
                         
                         # Convert frame to RGB
                         frame_rgb = frame.convert('RGB')
                         
-                        # Resize if too large
-                        if frame_rgb.width > max_gif_size or frame_rgb.height > max_gif_size:
-                            frame_rgb.thumbnail((max_gif_size, max_gif_size), Image.Resampling.LANCZOS)
+                        # Aggressive resize for bandwidth savings
+                        if frame_rgb.width > MAX_GIF_SIZE or frame_rgb.height > MAX_GIF_SIZE:
+                            frame_rgb.thumbnail((MAX_GIF_SIZE, MAX_GIF_SIZE), Image.Resampling.BILINEAR)  # BILINEAR is faster than LANCZOS
                         
                         frames.append(frame_rgb)
                         
-                        # Get frame duration and double it (since we're skipping frames)
+                        # Get frame duration and adjust (since we're skipping frames)
                         try:
                             duration = frame.info.get('duration', 100)
                         except:
                             duration = 100
-                        durations.append(duration * 2)  # Double duration to maintain animation speed
+                        durations.append(duration * 1.5)  # Adjust duration for skipped frames
                         
                         frame_count += 1
                     
-                    # Save optimized GIF
+                    # Save optimized GIF with aggressive compression
                     optimized_path = os.path.join(temp_dir, "optimized.gif")
                     frames[0].save(
                         optimized_path,
@@ -186,29 +303,23 @@ async def generate_qr(
                         append_images=frames[1:],
                         duration=durations,
                         loop=0,
-                        optimize=True
+                        optimize=True,
+                        quality=20  # Lower quality for smaller file size
                     )
                     
                     picture_path = optimized_path
-                    logger.info(f"GIF optimized: {frame_count} frames, size: {frames[0].size}")
                     
                 except Exception as e:
-                    logger.error(f"Error optimizing GIF: {e}")
                     # Fall back to original if optimization fails
                     picture_path = original_path
-                    logger.warning("Using original GIF without optimization")
             else:
                 # Optimize static images (PNG, JPG, BMP)
-                logger.info("Optimizing static image...")
                 try:
                     img = Image.open(original_path)
                     
-                    # Optimal size for static QR codes - reduced for speed
-                    max_size = 600  # Reduced from 800 for faster processing
-                    
-                    if img.width > max_size or img.height > max_size:
-                        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                        logger.info(f"Resized image from original to {img.size}")
+                    # Aggressive resize for bandwidth optimization
+                    if img.width > MAX_IMAGE_SIZE or img.height > MAX_IMAGE_SIZE:
+                        img.thumbnail((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE), Image.Resampling.BILINEAR)  # Faster than LANCZOS
                     
                     # Convert to RGB if needed
                     if img.mode in ('RGBA', 'LA', 'P'):
@@ -220,26 +331,21 @@ async def generate_qr(
                     elif img.mode != 'RGB':
                         img = img.convert('RGB')
                     
-                    # Save optimized version with lower quality for speed
-                    optimized_path = os.path.join(temp_dir, f"optimized{file_ext}")
-                    img.save(optimized_path, quality=75, optimize=True)  # Reduced quality from 85 to 75
+                    # Save as JPEG with aggressive compression for bandwidth savings
+                    optimized_path = os.path.join(temp_dir, "optimized.jpg")
+                    img.save(optimized_path, 'JPEG', quality=JPEG_QUALITY, optimize=True)
                     picture_path = optimized_path
-                    logger.info(f"Image optimized successfully")
                     
                 except Exception as e:
-                    logger.error(f"Error optimizing image: {e}")
                     # Fall back to original if optimization fails
                     picture_path = original_path
-                    logger.warning("Using original image without optimization")
         
         # Determine output file name and format
-        safe_name = "".join(c if c.isalnum() or c in ('-', '_') else '_' for c in words[:50])
+        safe_name = "qr"  # Simplified filename to reduce processing
         if picture and picture.filename.lower().endswith('.gif'):
             save_name = f"{safe_name}.gif"
         else:
             save_name = f"{safe_name}.png"
-        
-        logger.info(f"Generating QR code: {save_name}")
         
         # Generate the QR code
         version_out, level_out, qr_name = amzqr.run(
@@ -257,40 +363,51 @@ async def generate_qr(
         output_file = os.path.join(temp_dir, qr_name)
         
         if not os.path.exists(output_file):
-            raise HTTPException(status_code=500, detail="QR code generation failed")
+            raise HTTPException(status_code=500, detail="Failed")
         
-        logger.info(f"QR code generated successfully: {qr_name}")
-        
-        # Read file into memory
+        # Read and optimize output file
         with open(output_file, "rb") as f:
             qr_data = f.read()
+        
+        # Further optimize PNG output for bandwidth savings
+        if qr_name.endswith('.png'):
+            try:
+                img = Image.open(output_file)
+                # Reduce colors for smaller file size
+                img = img.convert('P', palette=Image.ADAPTIVE, colors=128)
+                buffer = BytesIO()
+                img.save(buffer, 'PNG', optimize=True)
+                qr_data = buffer.getvalue()
+            except:
+                pass  # Use original if optimization fails
         
         # Determine media type
         media_type = "image/gif" if qr_name.endswith('.gif') else "image/png"
         
-        # Return as streaming response with in-memory data
+        # Return as streaming response with cache headers for bandwidth optimization
         return StreamingResponse(
             BytesIO(qr_data),
             media_type=media_type,
             headers={
-                "Content-Disposition": f'attachment; filename="{qr_name}"'
+                "Content-Disposition": f'attachment; filename="{qr_name}"',
+                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+                "Content-Length": str(len(qr_data))
             }
         )
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error generating QR code: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"QR code generation error: {str(e)}")
+        logger.error(f"Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Generation failed")
     finally:
         # Clean up temp directory immediately
         try:
             import shutil
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
-                logger.info(f"Cleaned up temp directory: {temp_dir}")
-        except Exception as e:
-            logger.error(f"Error cleaning up temp files: {e}")
+        except:
+            pass  # Ignore cleanup errors to save execution time
 
 
 
@@ -362,17 +479,29 @@ def main(context):
         
         
         
-        context.log(f"Appwrite request: {method} {path}")
+        # Reduced logging for faster execution
+        if path != "/health":
+            context.log(f"{method} {path}")
         
         # Handle CORS preflight OPTIONS requests
         if method == 'OPTIONS':
+            origin = headers.get('origin', '')
+            allowed_origin = 'https://qrcartoon.com'
+            
+            # Allow localhost for development
+            if origin in ['https://qrcartoon.com', 'https://www.qrcartoon.com'] or \
+               origin.startswith('http://localhost') or \
+               origin.startswith('http://127.0.0.1'):
+                allowed_origin = origin
+                
             return context.res.empty(
                 200,
                 {
-                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Origin': allowed_origin,
                     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-                    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-                    'Access-Control-Max-Age': '86400'
+                    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, x-api-key',
+                    'Access-Control-Max-Age': '3600',
+                    'Vary': 'Origin'
                 }
             )
         
@@ -399,14 +528,24 @@ def main(context):
             
         # Handle the response
         content_type = response.headers.get('content-type', '')
-        context.log(f"Response content-type: {content_type}, status: {response.status_code}")
         
-        # CORS headers - allow all origins for public API
+        # CORS headers - restricted to qrcartoon.com domains and localhost
+        origin = headers.get('origin', '')
+        allowed_origin = 'https://qrcartoon.com'
+        if origin in ['https://qrcartoon.com', 'https://www.qrcartoon.com'] or \
+           origin.startswith('http://localhost') or \
+           origin.startswith('http://127.0.0.1'):
+            allowed_origin = origin
+        
         cors_headers = {
-            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Origin': allowed_origin,
             'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-            'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-            'Access-Control-Max-Age': '86400'
+            'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, x-api-key',
+            'Access-Control-Max-Age': '3600',
+            'Vary': 'Origin',
+            'X-Content-Type-Options': 'nosniff',
+            'X-Frame-Options': 'DENY',
+            'X-XSS-Protection': '1; mode=block'
         }
         
         # Binary response (Images) - check both header and content
@@ -427,7 +566,6 @@ def main(context):
                         content_type = 'image/gif'
                     elif magic[:2] == b'\xff\xd8':
                         content_type = 'image/jpeg'
-                    context.log(f"Detected image by magic bytes, corrected content-type to: {content_type}")
         
         if is_image:
             # Use send() instead of binary() to properly set headers

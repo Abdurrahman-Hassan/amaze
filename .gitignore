@@ -8,6 +8,11 @@ venv/
 env/
 ENV/
 
+# Exclude environment variables (IMPORTANT!)
+.env
+.env.local
+.env.*.local
+
 # Exclude test files
 test_*.py
 !test_appwrite.py
